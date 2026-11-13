@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,30 @@ DEFAULT_FPS = "60"
 FPS_OPTIONS = ["24", "25", "30", "50", "60", "120"]
 TOLERANCE = 1.01  # vídeos com fps <= alvo * TOLERANCE são ignorados
 NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+# chave -> (rótulo, argumentos do encoder, pix_fmt, é GPU)
+ENCODERS: dict[str, tuple[str, list[str], str, bool]] = {
+    "h264_nvenc": ("GPU NVIDIA (NVENC)",
+                   ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "21", "-b:v", "0"],
+                   "yuv420p", True),
+    "h264_qsv": ("GPU Intel (QuickSync)",
+                 ["-c:v", "h264_qsv", "-preset", "faster", "-global_quality", "21"],
+                 "nv12", True),
+    "h264_amf": ("GPU AMD (AMF)",
+                 ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", "21", "-qp_p", "21"],
+                 "yuv420p", True),
+    "h264_videotoolbox": ("GPU Apple (VideoToolbox)",
+                          ["-c:v", "h264_videotoolbox", "-q:v", "65"],
+                          "yuv420p", True),
+    "x264_fast": ("CPU rápido (x264)",
+                  ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"], "yuv420p", False),
+    "x264_quality": ("CPU alta qualidade (x264, lento)",
+                     ["-c:v", "libx264", "-preset", "medium", "-crf", "18"], "yuv420p", False),
+}
+GPU_ORDER = {
+    "win32": ["h264_nvenc", "h264_qsv", "h264_amf"],
+    "darwin": ["h264_videotoolbox"],
+}.get(sys.platform, ["h264_nvenc"])
 
 
 # --------------------------------------------------------------------------- #
@@ -70,6 +95,25 @@ def probe(ffmpeg: str, path: Path) -> VideoInfo:
     return info
 
 
+def detect_encoders(ffmpeg: str) -> list[str]:
+    """Retorna as chaves de encoders de GPU que realmente funcionam nesta máquina."""
+    working = []
+    for key in GPU_ORDER:
+        _, args, pix_fmt, _ = ENCODERS[key]
+        cmd = [
+            ffmpeg, "-hide_banner", "-v", "error", "-nostdin",
+            "-f", "lavfi", "-i", "color=c=black:s=1280x720:r=30",
+            "-frames:v", "5", *args, "-pix_fmt", pix_fmt, "-f", "null", "-",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, timeout=20, creationflags=NO_WINDOW)
+        except Exception:
+            continue
+        if proc.returncode == 0:
+            working.append(key)
+    return working
+
+
 def atempo_chain(tempo: float) -> str:
     """atempo só aceita 0.5..2.0 por filtro; encadeia quando necessário."""
     parts = []
@@ -80,9 +124,14 @@ def atempo_chain(tempo: float) -> str:
     return ",".join(parts)
 
 
-def build_command(ffmpeg: str, info: VideoInfo, dst: Path, fps: float, keep_audio: bool) -> list[str]:
+def build_command(ffmpeg: str, info: VideoInfo, dst: Path, fps: float, keep_audio: bool,
+                  encoder: str = "x264_fast") -> list[str]:
     factor = info.fps / fps
-    cmd = [ffmpeg, "-hide_banner", "-y", "-nostdin", "-i", str(info.path), "-map", "0:v:0"]
+    _, enc_args, pix_fmt, is_gpu = ENCODERS[encoder]
+    cmd = [ffmpeg, "-hide_banner", "-y", "-nostdin"]
+    if is_gpu:
+        cmd += ["-hwaccel", "auto"]  # decodificação por GPU quando possível
+    cmd += ["-i", str(info.path), "-map", "0:v:0"]
     if keep_audio and info.has_audio:
         cmd += ["-map", "0:a:0", "-af", atempo_chain(1 / factor), "-c:a", "aac", "-b:a", "192k"]
     else:
@@ -91,7 +140,7 @@ def build_command(ffmpeg: str, info: VideoInfo, dst: Path, fps: float, keep_audi
         # Cada quadro recebe o timestamp N/fps: nenhum quadro é descartado ou duplicado.
         "-vf", f"setpts=N/({fps:g}*TB)",
         "-r", f"{fps:g}",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+        *enc_args, "-pix_fmt", pix_fmt,
         "-movflags", "+faststart",
         "-progress", "pipe:1", "-nostats",
         str(dst),
@@ -111,6 +160,13 @@ def fmt_time(seconds: float | None) -> str:
 # --------------------------------------------------------------------------- #
 # GUI
 # --------------------------------------------------------------------------- #
+def fmt_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.1f} s"
+    h, rest = divmod(int(round(seconds)), 3600)
+    m, s = divmod(rest, 60)
+    return f"{h:d}h{m:02d}min{s:02d}s" if h else f"{m:d}min{s:02d}s"
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -130,6 +186,9 @@ class App(tk.Tk):
         self.folder_var = tk.StringVar()
         self.fps_var = tk.StringVar(value=DEFAULT_FPS)
         self.audio_var = tk.BooleanVar(value=False)
+        self.enc_var = tk.StringVar(value="Detectando encoders...")
+        self.enc_map: dict[str, str] = {}
+        self.encoders_ready = False
 
         self._build_ui()
         self.fps_var.trace_add("write", lambda *_: self.refresh_tree())
@@ -141,6 +200,8 @@ class App(tk.Tk):
                 "ffmpeg não encontrado.\nInstale com 'pip install imageio-ffmpeg' "
                 "ou adicione o ffmpeg ao PATH.",
             )
+        else:
+            threading.Thread(target=self.detect_worker, daemon=True).start()
 
     # ---- layout ---------------------------------------------------------- #
     def _build_ui(self) -> None:
@@ -164,6 +225,11 @@ class App(tk.Tk):
             opts, text="Manter áudio (desacelerado)", variable=self.audio_var
         )
         self.chk_audio.pack(side="left", padx=16)
+        ttk.Label(opts, text="Encoder:").pack(side="left", padx=(16, 0))
+        self.enc_combo = ttk.Combobox(
+            opts, textvariable=self.enc_var, state="disabled", width=34
+        )
+        self.enc_combo.pack(side="left", padx=8)
 
         cols = ("fps", "dur", "factor", "newdur", "status")
         heads = ("FPS original", "Duração", "Fator", "Nova duração", "Status")
@@ -219,6 +285,9 @@ class App(tk.Tk):
         self.btn_browse.configure(state="disabled" if busy else "normal")
         self.fps_combo.configure(state="disabled" if busy else "normal")
         self.chk_audio.configure(state="disabled" if busy else "normal")
+        self.enc_combo.configure(
+            state="readonly" if (self.encoders_ready and not busy) else "disabled"
+        )
         self.btn_cancel.configure(state="normal" if busy else "disabled")
         self.update_start_button()
 
@@ -226,6 +295,7 @@ class App(tk.Tk):
         fps = self.target_fps()
         ok = (
             not self.busy
+            and self.encoders_ready
             and self.ffmpeg
             and fps
             and any(self.is_convertible(i, fps) for i in self.infos)
@@ -269,6 +339,9 @@ class App(tk.Tk):
         self.log_msg(f"Analisando {chosen} ...")
         threading.Thread(target=self.scan_worker, args=(self.folder,), daemon=True).start()
 
+    def detect_worker(self) -> None:
+        self.events.put(("encoders", detect_encoders(self.ffmpeg)))
+
     def scan_worker(self, folder: Path) -> None:
         files = sorted(
             p for p in folder.iterdir()
@@ -293,9 +366,10 @@ class App(tk.Tk):
         self.refresh_tree()
         self.set_busy(True)
         out_dir = self.folder / f"slowmo_{fps:g}fps"
+        encoder = self.enc_map.get(self.enc_var.get(), "x264_fast")
         threading.Thread(
             target=self.convert_worker,
-            args=(list(self.infos), out_dir, fps, self.audio_var.get()),
+            args=(list(self.infos), out_dir, fps, self.audio_var.get(), encoder),
             daemon=True,
         ).start()
 
@@ -306,19 +380,25 @@ class App(tk.Tk):
         self.log_msg("Cancelando...")
 
     # ---- conversão (thread) --------------------------------------------- #
-    def convert_worker(self, infos: list[VideoInfo], out_dir: Path, fps: float, keep_audio: bool) -> None:
+    def convert_worker(self, infos: list[VideoInfo], out_dir: Path, fps: float,
+                       keep_audio: bool, encoder: str) -> None:
         todo = [(i, inf) for i, inf in enumerate(infos) if self.is_convertible(inf, fps)]
         out_dir.mkdir(exist_ok=True)
         done = 0
+        batch_start = time.monotonic()
         for n, (idx, info) in enumerate(todo):
             if self.cancel_event.is_set():
                 break
             dst = out_dir / f"{info.path.stem}_{fps:g}fps.mp4"
             factor = info.fps / fps
+            file_start = time.monotonic()
             self.events.put(("current", n, len(todo), info.path.name))
             self.events.put(("status", idx, "Convertendo..."))
             self.events.put(("log", f"{info.path.name}: {info.fps:g} fps -> {fps:g} fps ({factor:.2f}x mais longo)"))
-            ok, msg = self.convert_one(info, dst, fps, keep_audio, idx, n, len(todo), factor)
+            ok, msg = self.convert_one(info, dst, fps, keep_audio, idx, n, len(todo), factor, encoder)
+            if not ok and ENCODERS[encoder][3] and not self.cancel_event.is_set():
+                self.events.put(("log", f"Encoder de GPU falhou em {info.path.name}; tentando na CPU."))
+                ok, msg = self.convert_one(info, dst, fps, keep_audio, idx, n, len(todo), factor, "x264_fast")
             if self.cancel_event.is_set():
                 dst.unlink(missing_ok=True)
                 self.events.put(("status", idx, "Cancelado"))
@@ -326,14 +406,16 @@ class App(tk.Tk):
             if ok:
                 done += 1
                 self.events.put(("status", idx, "Concluído"))
+                self.events.put(("log", f"{info.path.name}: concluído em {fmt_elapsed(time.monotonic() - file_start)}"))
             else:
                 dst.unlink(missing_ok=True)
                 self.events.put(("status", idx, "Erro"))
                 self.events.put(("log", f"Erro em {info.path.name}:\n{msg}"))
-        self.events.put(("finished", done, len(todo), str(out_dir), self.cancel_event.is_set()))
+        self.events.put(("finished", done, len(todo), str(out_dir), self.cancel_event.is_set(),
+                         time.monotonic() - batch_start))
 
-    def convert_one(self, info, dst, fps, keep_audio, idx, n, total, factor) -> tuple[bool, str]:
-        cmd = build_command(self.ffmpeg, info, dst, fps, keep_audio)
+    def convert_one(self, info, dst, fps, keep_audio, idx, n, total, factor, encoder) -> tuple[bool, str]:
+        cmd = build_command(self.ffmpeg, info, dst, fps, keep_audio, encoder)
         out_duration = (info.duration or 0) * factor
         tail: list[str] = []
         self.proc = subprocess.Popen(
@@ -361,6 +443,18 @@ class App(tk.Tk):
                 kind = ev[0]
                 if kind == "log":
                     self.log_msg(ev[1])
+                elif kind == "encoders":
+                    gpu = ev[1]
+                    auto_key = gpu[0] if gpu else "x264_fast"
+                    self.enc_map = {f"Automático ({ENCODERS[auto_key][0]})": auto_key}
+                    for key in [*gpu, "x264_fast", "x264_quality"]:
+                        self.enc_map[ENCODERS[key][0]] = key
+                    self.enc_combo.configure(values=list(self.enc_map))
+                    self.enc_var.set(next(iter(self.enc_map)))
+                    self.encoders_ready = True
+                    self.set_busy(self.busy)
+                    self.log_msg("Encoders disponíveis: " + ", ".join(
+                        ENCODERS[k][0] for k in [*gpu, "x264_fast"]))
                 elif kind == "scanned":
                     self.infos = ev[1]
                     self.refresh_tree()
@@ -381,14 +475,14 @@ class App(tk.Tk):
                     if self.tree.exists(str(idx)):
                         self.tree.set(str(idx), "status", f"Convertendo {frac * 100:.0f}%")
                 elif kind == "finished":
-                    _, done, total, out_dir, cancelled = ev
+                    _, done, total, out_dir, cancelled, elapsed = ev
                     self.set_busy(False)
                     if not cancelled:
                         self.bar_current["value"] = 100 if total else 0
                         self.bar_total["value"] = 100 if total else 0
                     self.log_msg(
                         ("Cancelado. " if cancelled else "Finalizado. ")
-                        + f"{done}/{total} convertido(s). Saída: {out_dir}"
+                        + f"{done}/{total} convertido(s) em {fmt_elapsed(elapsed)}. Saída: {out_dir}"
                     )
         except queue.Empty:
             pass

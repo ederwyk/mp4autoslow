@@ -23,7 +23,9 @@ Os arquivos gerados ficam em `<pasta escolhida>/slowmo_<fps>fps/` com o nome `<o
 ### Detalhes técnicos
 
 - Filtro de vídeo: `setpts=N/(FPS*TB)`, que atribui a cada quadro o timestamp `N/FPS`. Assim, nenhum quadro é descartado ou duplicado e a saída tem FPS constante (inclusive para fontes como 239,76 fps).
-- Codec de saída: H.264 (`libx264`, CRF 18, `yuv420p`, `faststart`), compatível com qualquer player.
+- Codec de saída: H.264 (`yuv420p`, `faststart`), compatível com qualquer player.
+- Encoder (campo "Encoder"): no modo **Automático** o app testa a GPU ao abrir (NVIDIA NVENC, Intel QuickSync, AMD AMF no Windows; VideoToolbox no macOS) e a usa se funcionar, o que é bem mais rápido. Sem GPU compatível, usa `libx264 veryfast`. Há também "CPU alta qualidade" (`medium`, CRF 18), mais lento. Se a GPU falhar em um arquivo, ele é refeito automaticamente na CPU.
+- Velocidade: como nenhum quadro é descartado, um vídeo de 240 fps gera 4x mais quadros a codificar do que um de 60 fps com a mesma duração; por isso a conversão é naturalmente pesada.
 - Áudio: por padrão é **removido**. Com a opção "Manter áudio (desacelerado)", o áudio é esticado com `atempo` para acompanhar o vídeo (soará grave/lento).
 - Trilhas de dados da GoPro (GPMF, timecode) não são copiadas; só o primeiro vídeo (e o primeiro áudio, se marcado).
 
