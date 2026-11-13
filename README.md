@@ -1,4 +1,4 @@
-# GoPro Auto Slow
+# MP4 Auto Slow
 
 Aplicativo desktop (Python + Tkinter + ffmpeg) que converte em lote os vídeos MP4 de uma pasta para **slow motion**, mantendo todos os quadros.
 
@@ -61,12 +61,12 @@ python build.py
 
 | Sistema | Resultado |
 |---|---|
-| Windows | `dist/GoProAutoSlow.exe` (arquivo único) |
-| macOS | `dist/GoProAutoSlow.app` e `dist/GoProAutoSlow-macos.zip` |
+| Windows | `dist/MP4AutoSlow.exe` (arquivo único) |
+| macOS | `dist/MP4AutoSlow.app` e `dist/MP4AutoSlow-macos.zip` |
 
 Notas:
 
-- **macOS**: o app gerado tem a arquitetura da máquina que o compilou (Apple Silicon ou Intel). Sem assinatura/notarização, o Gatekeeper pode bloquear; neste caso use clique direito > Abrir ou `xattr -cr GoProAutoSlow.app`.
+- **macOS**: o app gerado tem a arquitetura da máquina que o compilou (Apple Silicon ou Intel). Sem assinatura/notarização, o Gatekeeper pode bloquear; neste caso use clique direito > Abrir ou `xattr -cr MP4AutoSlow.app`.
 - **Windows**: o SmartScreen pode alertar para executáveis não assinados.
 - O workflow [.github/workflows/build.yml](.github/workflows/build.yml) gera os dois executáveis no GitHub Actions (manualmente ou ao criar uma tag `v*`).
 

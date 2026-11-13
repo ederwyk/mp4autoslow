@@ -3,8 +3,8 @@
     pip install -r requirements-build.txt
     python build.py
 
-Windows -> dist/GoProAutoSlow.exe e dist/GoProAutoSlow-Setup.exe (requer Inno Setup 6)
-macOS   -> dist/GoProAutoSlow.app, dist/GoProAutoSlow-macos.zip e dist/GoProAutoSlow.dmg
+Windows -> dist/MP4AutoSlow.exe e dist/MP4AutoSlow-Setup.exe (requer Inno Setup 6)
+macOS   -> dist/MP4AutoSlow.app, dist/MP4AutoSlow-macos.zip e dist/MP4AutoSlow.dmg
 
 O PyInstaller não faz cross-compile: rode em cada sistema que quiser gerar.
 """
@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-NAME = "GoProAutoSlow"
+NAME = "MP4AutoSlow"
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 
@@ -29,7 +29,7 @@ def build_dmg(app: Path) -> Path:
     (staging / "Applications").symlink_to("/Applications")
     dmg.unlink(missing_ok=True)
     subprocess.run(
-        ["hdiutil", "create", "-volname", "GoPro Auto Slow", "-srcfolder", str(staging),
+        ["hdiutil", "create", "-volname", "MP4 Auto Slow", "-srcfolder", str(staging),
          "-ov", "-format", "UDZO", str(dmg)],
         check=True,
     )

@@ -1,4 +1,4 @@
-"""GoPro Auto Slow - converte vídeos de alto FPS (ex.: 240 fps) em slow motion.
+"""MP4 Auto Slow - converte vídeos de alto FPS (ex.: 240 fps) em slow motion.
 
 Nenhum frame é removido: todos os quadros são mantidos e apenas reposicionados
 no tempo para uma taxa fixa de FPS (padrão 60). Um vídeo de 240 fps exportado
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-APP_NAME = "GoPro Auto Slow"
+APP_NAME = "MP4 Auto Slow"
 DEFAULT_FPS = "60"
 FPS_OPTIONS = ["24", "25", "30", "50", "60", "120"]
 TOLERANCE = 1.01  # vídeos com fps <= alvo * TOLERANCE são ignorados

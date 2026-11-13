@@ -23,9 +23,9 @@ jobs:
       - run: python build.py
       - uses: actions/upload-artifact@v4
         with:
-          name: GoProAutoSlow-${{ matrix.os }}
+          name: MP4AutoSlow-${{ matrix.os }}
           path: |
-            dist/GoProAutoSlow.exe
-            dist/GoProAutoSlow-Setup.exe
-            dist/GoProAutoSlow-macos.zip
-            dist/GoProAutoSlow.dmg
+            dist/MP4AutoSlow.exe
+            dist/MP4AutoSlow-Setup.exe
+            dist/MP4AutoSlow-macos.zip
+            dist/MP4AutoSlow.dmg

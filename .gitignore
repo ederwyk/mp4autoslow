@@ -2,5 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 build/
-dist/
+dist/*
+!dist/*.dmg
 *.spec

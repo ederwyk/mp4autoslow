@@ -1,6 +1,6 @@
 ; Instalador Windows (Inno Setup 6). Gerado por build.py ou: iscc installer\windows.iss
-#define AppName "GoPro Auto Slow"
-#define AppExe "GoProAutoSlow.exe"
+#define AppName "MP4 Auto Slow"
+#define AppExe "MP4AutoSlow.exe"
 #define AppVersion "1.0.0"
 
 [Setup]
@@ -11,7 +11,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist
-OutputBaseFilename=GoProAutoSlow-Setup
+OutputBaseFilename=MP4AutoSlow-Setup
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
